@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Ресторан | Лояльность по ID Telegram</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            padding-bottom: 70px;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 16px;
+            padding-top: env(safe-area-inset-top, 16px);
+        }
+
+        .tab-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: space-around;
+            padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+            border-top: 1px solid var(--tg-theme-hint-color, #ccc);
+            z-index: 1000;
+        }
+
+        .tab {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            background: none;
+            border: none;
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 12px;
+        }
+
+        .tab.active {
+            color: var(--tg-theme-button-color, #31b545);
+        }
+
+        .tab-icon {
+            font-size: 24px;
+        }
+
+        .card, .menu-item, .promo-card, .booking-item {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        button, input, select {
+            font-size: 16px;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid var(--tg-theme-hint-color, #ddd);
+            background: var(--tg-theme-bg-color, white);
+            color: var(--tg-theme-text-color, black);
+            width: 100%;
+            margin-bottom: 12px;
+        }
+
+        button {
+            background: var(--tg-theme-button-color, #31b545);
+            color: var(--tg-theme-button-text-color, white);
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .bonus-balance {
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+            background: linear-gradient(135deg, gold, orange);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .loyalty-badge {
+            text-align: center;
+            padding: 8px;
+            border-radius: 20px;
+            background: var(--tg-theme-button-color, #31b545);
+            color: white;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 80px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.85);
+            color: white;
+            padding: 12px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 2000;
+            animation: fadeInOut 2s ease;
+        }
+
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(20px); }
+            15% { opacity: 1; transform: translateY(0); }
+            85% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app"></div>
+
+    <div class="tab-bar">
+        <button class="tab" data-tab="booking">📅<span>Стол</span></button>
+        <button class="tab" data-tab="menu">📖<span>Меню</span></button>
+        <button class="tab" data-tab="bonus">🎁<span>Бонусы</span></button>
+        <button class="tab" data-tab="promo">🔥<span>Акции</span></button>
+        <button class="tab" data-tab="contacts">📞<span>Контакты</span></button>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        // --- Инициализация Telegram WebApp ---
+        let tg = window.Telegram?.WebApp;
+        if (!tg || !tg.initDataUnsafe?.user?.id) {
+            // Фейковый ID для теста без Telegram
+            tg = {
+                initDataUnsafe: { user: { id: 999888777, first_name: "TestUser", username: "tester" } },
+                ready: () => {},
+                expand: () => {},
+                close: () => {},
+                HapticFeedback: { impactOccurred: () => {} },
+                themeParams: { bg_color: "#ffffff", text_color: "#000000" }
+            };
+        }
+        
+        tg.expand();
+        tg.ready();
+        document.body.style.background = tg.themeParams.bg_color || '#ffffff';
+        
+        // Глобальные переменные
+        const TELEGRAM_USER_ID = tg.initDataUnsafe.user.id;
+        const TELEGRAM_USER_NAME = tg.initDataUnsafe.user.first_name || "Гость";
+        const API_BASE = "https://YOUR_BACKEND_URL"; // замени на свой URL
+        let currentTab = "booking";
+        
+        // Показывать уведомления
+        function showToast(message, isError = false) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            toast.style.background = isError ? 'rgba(220, 50, 50, 0.95)' : 'rgba(0,0,0,0.85)';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+            tg.HapticFeedback?.impactOccurred('light');
+        }
+        
+        // Универсальный запрос к API
+        async function apiCall(endpoint, options = {}) {
+            const url = `${API_BASE}${endpoint}`;
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-Telegram-User-Id': TELEGRAM_USER_ID,
+                ...options.headers
+            };
+            const response = await fetch(url, { ...options, headers });
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error);
+            }
+            return response.json();
+        }
+        
+        // --- Отрисовка вкладок (каждая привязана к ID) ---
+        
+        // 1. Бронирование стола
+        async function renderBooking() {
+            // Загружаем прошлые брони пользователя
+            const myBookings = await apiCall(`/api/bookings/user/${TELEGRAM_USER_ID}`);
+            
+            const formHtml = `
+                <h2>📅 Бронирование стола</h2>
+                <div class="card">
+                    <input type="text" id="name" placeholder="Ваше имя" value="${TELEGRAM_USER_NAME}">
+                    <input type="tel" id="phone" placeholder="Телефон" required>
+                    <input type="date" id="date" min="${new Date().toISOString().split('T')[0]}">
+                    <input type="time" id="time">
+                    <input type="number" id="guests" placeholder="Кол-во гостей" min="1" max="10" value="2">
+                    <button id="submitBookingBtn">✅ Забронировать (+50 бонусов)</button>
+                </div>
+                <h3>📋 Мои бронирования</h3>
+                ${myBookings.length === 0 ? '<p>Пока нет броней</p>' : 
+                    myBookings.map(b => `
+                        <div class="booking-item">
+                            <strong>${b.date} в ${b.time}</strong><br>
+                            Гостей: ${b.guests} | Статус: ${b.status === 'pending' ? '⏳ Ожидает' : '✅ Подтверждено'}
+                        </div>
+                    `).join('')
+                }
+            `;
+            document.getElementById('app').innerHTML = formHtml;
+            
+            document.getElementById('submitBookingBtn')?.addEventListener('click', async () => {
+                const phone = document.getElementById('phone').value;
+                const date = document.getElementById('date').value;
+                const time = document.getElementById('time').value;
+                const guests = parseInt(document.getElementById('guests').value);
+                
+                if (!phone || !date || !time) {
+                    showToast('Заполните телефон, дату и время', true);
+                    return;
+                }
+                
+                try {
+                    const booking = await apiCall('/api/bookings', {
+                        method: 'POST',
+                        body: JSON.stringify({ name: TELEGRAM_USER_NAME, phone, date, time, guests })
+                    });
+                    
+                    // Автоматически начисляем 50 бонусов за бронь
+                    await apiCall('/api/bonuses/add', {
+                        method: 'POST',
+                        body: JSON.stringify({ amount: 50, reason: `Бронь стола #${booking.id}` })
+                    });
+                    
+                    showToast(`✅ Стол забронирован! +50 бонусов`);
+                    setTimeout(() => renderBooking(), 1000);
+                } catch(e) {
+                    showToast('Ошибка: ' + e.message, true);
+                }
+            });
+        }
+        
+        // 2. Меню
+        async function renderMenu() {
+            const menu = await apiCall('/api/menu');
+            document.getElementById('app').innerHTML = `
+                <h2>📖 Наше меню</h2>
+                ${menu.map(item => `
+                    <div class="menu-item">
+                        <strong>${item.name}</strong> — ${item.price} ₽<br>
+                        <small>${item.desc}</small><br>
+                        <button class="likeBtn" data-id="${item.id}">❤️ Лайк (+5 бонусов)</button>
+                    </div>
+                `).join('')}
+            `;
+            
+            document.querySelectorAll('.likeBtn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const itemId = e.target.dataset.id;
+                    await apiCall(`/api/bonuses/add`, {
+                        method: 'POST',
+                        body: JSON.stringify({ amount: 5, reason: `Лайк блюда #${itemId}` })
+                    });
+                    showToast(`❤️ Спасибо за лайк! +5 бонусов`);
+                    e.target.disabled = true;
+                    e.target.textContent = '✓ Лайкнут';
+                });
+            });
+        }
+        
+        // 3. Бонусы + уровень лояльности
+        async function renderBonus() {
+            const bonusData = await apiCall(`/api/bonuses/${TELEGRAM_USER_ID}`);
+            const bookingsCount = await apiCall(`/api/bookings/count/${TELEGRAM_USER_ID}`);
+            const loyaltyLevel = bookingsCount.count >= 3 ? '🥇 Постоянный гость (кешбэк 10%)' : '⭐ Новый гость (кешбэк 5%)';
+            
+            document.getElementById('app').innerHTML = `
+                <h2>🎁 Моя лояльность</h2>
+                <div class="loyalty-badge">${loyaltyLevel}</div>
+                <div class="bonus-balance">${bonusData.balance} бонусов</div>
+                <div class="card">
+                    <h3>📜 История операций</h3>
+                    ${bonusData.history.length === 0 ? '<p>Пока нет операций</p>' :
+                        bonusData.history.map(h => `<div>${h.date} — ${h.amount > 0 ? '+' : ''}${h.amount} (${h.reason})</div>`).join('')
+                    }
+                </div>
+                <div class="card">
+                    <h3>💰 Как потратить бонусы?</h3>
+                    <p>100 бонусов = 50₽ скидка при оплате счета. Покажите этот экран официанту.</p>
+                </div>
+            `;
+        }
+        
+        // 4. Акции
+        async function renderPromo() {
+            const promos = await apiCall('/api/promos');
+            document.getElementById('app').innerHTML = `
+                <h2>🔥 Акции и скидки</h2>
+                ${promos.map(p => `
+                    <div class="promo-card">
+                        <strong>${p.name}</strong> — скидка ${p.discount}%<br>
+                        ${p.desc}<br>
+                        <button class="copyPromoBtn" data-code="${p.code}">📋 Скопировать код: ${p.code}</button>
+                    </div>
+                `).join('')}
+            `;
+            
+            document.querySelectorAll('.copyPromoBtn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const code = btn.dataset.code;
+                    navigator.clipboard.writeText(code);
+                    showToast(`✅ Промокод ${code} скопирован`);
+                });
+            });
+        }
+        
+        // 5. Контакты
+        function renderContacts() {
+            document.getElementById('app').innerHTML = `
+                <h2>📞 Контакты</h2>
+                <div class="card">
+                    <p>📍 ул. Тверская, д. 15, Москва</p>
+                    <p>📞 <a href="tel:+74951234567" style="color: var(--tg-theme-link-color)">+7 (495) 123-45-67</a></p>
+                    <p>🕒 Ежедневно: 12:00 – 23:00</p>
+                    <button id="shareContactBtn">📱 Поделиться моим номером</button>
+                </div>
+                <iframe width="100%" height="200" frameborder="0" style="border-radius:16px" 
+                    src="https://yandex.ru/map-widget/v1/?ll=37.617698,55.755864&z=12"></iframe>
+            `;
+            
+            document.getElementById('shareContactBtn')?.addEventListener('click', () => {
+                tg.HapticFeedback?.impactOccurred('light');
+                showToast(`Ваш номер передан ресторану (ID: ${TELEGRAM_USER_ID})`);
+            });
+        }
+        
+        // --- Главный рендер по вкладке ---
+        async function renderCurrentTab() {
+            try {
+                if (currentTab === 'booking') await renderBooking();
+                else if (currentTab === 'menu') await renderMenu();
+                else if (currentTab === 'bonus') await renderBonus();
+                else if (currentTab === 'promo') await renderPromo();
+                else if (currentTab === 'contacts') renderContacts();
+            } catch(e) {
+                console.error(e);
+                showToast('Ошибка загрузки. Проверьте сервер', true);
+            }
+        }
+        
+        // --- Обработка нажатий на табы ---
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                currentTab = tab.dataset.tab;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                renderCurrentTab();
+            });
+        });
+        
+        // Запуск
+        document.querySelector('.tab').classList.add('active');
+        renderCurrentTab();
+    </script>
+</body>
+</html>
